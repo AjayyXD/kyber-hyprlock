@@ -1,0 +1,455 @@
+#!/usr/bin/env bash
+# kyber — a terminal-style lock screen theme for hyprlock
+# https://github.com/AjayXD/kyber
+# SPDX-License-Identifier: MIT
+
+if ((BASH_VERSINFO[0] < 5)); then
+    echo "kyber: bash 5.0 or newer is required" >&2
+    exit 1
+fi
+
+KYBER_VERSION="1.0.0"
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+SHARE="${KYBER_SHARE:-$(dirname "$SELF")/../share/kyber}"
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kyber"
+CONF_FILE="$CONF_DIR/config"
+OUT_FILE="$CONF_DIR/hyprlock.conf"
+STATE="${XDG_RUNTIME_DIR:-/tmp}"
+CLK_TCK=100   # kernel ticks per second (100 on virtually every Linux system)
+
+# ── defaults (overridden by ~/.config/kyber/config) ───────────────────────────
+PALETTE=catppuccin
+FONT="JetBrainsMono Nerd Font"
+FONT_THIN="JetBrainsMono Nerd Font Light"
+BACKGROUND=screenshot
+WALLPAPER=""
+SLIDESHOW_INTERVAL=15
+BLUR=3
+BRIGHTNESS=0.5
+MILLISECONDS=1
+CLOCK_24H=1
+HIDE_HOST=0
+HIDE_IP=0
+HIDE_NETWORK=0
+NET_IFACE=""
+TEXT_DOTS=1
+
+die()  { echo "kyber: $*" >&2; exit 1; }
+warn() { echo "kyber: warning: $*" >&2; }
+
+load_config() {
+    [[ -r $CONF_FILE ]] || return 0
+    local line k v
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%%#*}
+        [[ $line == *=* ]] || continue
+        k=${line%%=*}; v=${line#*=}
+        k=${k//[[:space:]]/}
+        v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}
+        v=${v#[\"\']}; v=${v%[\"\']}
+        case $k in
+            PALETTE|FONT|FONT_THIN|BACKGROUND|WALLPAPER|SLIDESHOW_INTERVAL|BLUR|BRIGHTNESS|\
+            MILLISECONDS|CLOCK_24H|HIDE_HOST|HIDE_IP|HIDE_NETWORK|NET_IFACE|TEXT_DOTS)
+                printf -v "$k" '%s' "$v" ;;
+        esac
+    done < "$CONF_FILE"
+}
+
+# ── palettes ──────────────────────────────────────────────────────────────────
+# BG = window fill, FG = main text, SUB = secondary text, DIM = muted,
+# KEY = labels/accent, OK/WARN/BAD = status colors
+palette() {
+    case "$1" in
+        gruvbox)     C_BG="#1d2021"; C_FG="#ebdbb2"; C_SUB="#a89984"; C_DIM="#928374"
+                     C_KEY="#83a598"; C_OK="#b8bb26"; C_WARN="#fabd2f"; C_BAD="#fb4934" ;;
+        nord)        C_BG="#2e3440"; C_FG="#d8dee9"; C_SUB="#9aa5b8"; C_DIM="#616e88"
+                     C_KEY="#81a1c1"; C_OK="#a3be8c"; C_WARN="#ebcb8b"; C_BAD="#bf616a" ;;
+        tokyo-night) C_BG="#16161e"; C_FG="#c0caf5"; C_SUB="#a9b1d6"; C_DIM="#565f89"
+                     C_KEY="#7aa2f7"; C_OK="#9ece6a"; C_WARN="#e0af68"; C_BAD="#f7768e" ;;
+        dracula)     C_BG="#21222c"; C_FG="#f8f8f2"; C_SUB="#bfbfbf"; C_DIM="#6272a4"
+                     C_KEY="#bd93f9"; C_OK="#50fa7b"; C_WARN="#f1fa8c"; C_BAD="#ff5555" ;;
+        catppuccin)  C_BG="#11111b"; C_FG="#cdd6f4"; C_SUB="#a6adc8"; C_DIM="#6c7086"
+                     C_KEY="#89b4fa"; C_OK="#a6e3a1"; C_WARN="#f9e2af"; C_BAD="#f38ba8" ;;
+        *)           warn "unknown PALETTE '$1', using catppuccin"; palette catppuccin ;;
+    esac
+}
+
+rgb() { local h=${1#\#}; printf '%d, %d, %d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"; }
+
+# ── formatting helpers (Pango markup for hyprlock labels) ─────────────────────
+esc()  { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+span() { printf '<span foreground="%s">%s</span>' "$1" "$2"; }
+val()  { span "$C_FG" "$1"; }
+row()  { printf '%s%s\n' "$(span "$C_KEY" "$(printf '%-8s' "$1")")" "$(val "$(printf '%.40s' "$2" | esc)")"; }
+rowm() { printf '%s%s\n' "$(span "$C_KEY" "$(printf '%-8s' "$1")")" "$2"; }
+
+tone() {
+    local p=$1
+    if   ((p >= 85)); then echo "$C_BAD"
+    elif ((p >= 60)); then echo "$C_WARN"
+    else echo "$C_OK"; fi
+}
+
+bar() {
+    local p=$1 w=14 n f e
+    ((p > 100)) && p=100
+    ((p < 0)) && p=0
+    n=$((p * w / 100))
+    f=$(printf '%*s' "$n" '');  e=$(printf '%*s' "$((w - n))" '')
+    printf '%s%s' "$(span "$(tone "$p")" "${f// /█}")" "$(span "$C_DIM" "${e// /░}")"
+}
+
+hum() {   # hum <bytes> [suffix]
+    awk -v b="$1" -v s="$2" 'BEGIN{
+        split("B KiB MiB GiB TiB", u, " "); i = 1
+        while (b >= 1024 && i < 5) { b /= 1024; i++ }
+        if (i == 1) printf "%d %s%s", b, u[i], s; else printf "%.1f %s%s", b, u[i], s }'
+}
+
+fmt_cs() {   # centiseconds -> [Nd ]HH:MM:SS[.mmm]
+    local cs=$1 d h m s ms
+    d=$((cs / 8640000)); h=$((cs % 8640000 / 360000)); m=$((cs % 360000 / 6000))
+    s=$((cs % 6000 / 100)); ms=$((cs % 100 * 10))
+    local out
+    if [[ $MILLISECONDS == 1 ]]; then
+        out=$(printf '%02d:%02d:%02d.%03d' "$h" "$m" "$s" "$ms")
+    else
+        out=$(printf '%02d:%02d:%02d' "$h" "$m" "$s")
+    fi
+    ((d > 0)) && out="${d}d $out"
+    printf '%s' "$out"
+}
+
+# ── system probes ─────────────────────────────────────────────────────────────
+pkg_count() {
+    if   command -v pacman      >/dev/null 2>&1; then pacman -Qq 2>/dev/null | wc -l
+    elif command -v dpkg-query  >/dev/null 2>&1; then dpkg-query -f '.\n' -W 2>/dev/null | wc -l
+    elif command -v rpm         >/dev/null 2>&1; then rpm -qa 2>/dev/null | wc -l
+    else echo 0; fi
+}
+
+cpu_temp() {   # prints millidegrees C, or nothing
+    local h n v z
+    for h in /sys/class/hwmon/hwmon*; do
+        [[ -r $h/name && -r $h/temp1_input ]] || continue
+        read -r n < "$h/name"
+        case $n in
+            coretemp|k10temp|zenpower|cpu_thermal|cpu-thermal)
+                read -r v < "$h/temp1_input"; echo "$v"; return ;;
+        esac
+    done
+    for z in /sys/class/thermal/thermal_zone*; do
+        [[ -r $z/type && -r $z/temp ]] || continue
+        case $(<"$z/type") in
+            x86_pkg_temp|acpitz|cpu*) read -r v < "$z/temp"; echo "$v"; return ;;
+        esac
+    done
+}
+
+# ── feeds (called by hyprlock through cmd[...]) ───────────────────────────────
+feed_clock() {
+    local hm='%H:%M' suffix=''
+    if [[ $CLOCK_24H != 1 ]]; then hm='%I:%M'; suffix=" $(printf '%(%p)T' -1)"; fi
+    printf '%s%s' "$(printf "%(${hm})T" -1)" "$(span "$C_DIM" ":$(printf '%(%S)T' -1)$suffix")"
+}
+
+feed_sys() {
+    local os kernel host cpu gpu disk pk
+    os=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-Linux}")
+    kernel=$(uname -r)
+    if [[ $HIDE_HOST == 1 ]]; then
+        host="hidden"
+    else
+        host=$(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null)
+        host=${host:-$(hostname 2>/dev/null)}
+    fi
+    cpu=$(awk -F: '/model name/{print $2; exit}' /proc/cpuinfo \
+          | sed -E 's/\((R|TM)\)//g; s/ CPU//; s/ @.*//; s/^ +//; s/ +/ /g')
+    cpu="${cpu:-unknown} ($(nproc)t)"
+    gpu=$(lspci -mm 2>/dev/null | awk -F'"' '/VGA|3D|Display/{print $4" "$6; exit}' \
+          | sed -E 's/ Corporation//; s/Advanced Micro Devices, Inc\. \[AMD\/ATI\]/AMD/')
+    gpu=${gpu:-n/a}
+    disk=$(df -h --output=used,size,pcent / 2>/dev/null | awk 'NR==2{print $1" / "$2" ("$3")"}')
+    pk=$(pkg_count); ((pk == 0)) && pk="n/a"
+
+    row os     "$os"
+    row kernel "$kernel"
+    row host   "$host"
+    row cpu    "$cpu"
+    row gpu    "$gpu"
+    row disk   "${disk:-n/a}"
+    row pkgs   "$pk"
+}
+
+feed_live() {
+    # cpu load: delta of /proc/stat since the previous call
+    local u n s i w irq sirq st total idle pct=0 pt pi f
+    read -r _ u n s i w irq sirq st _ < /proc/stat
+    total=$((u + n + s + i + w + irq + sirq + st)); idle=$((i + w))
+    f="$STATE/.kyber_cpu"
+    if [[ -r $f ]] && read -r pt pi < "$f" && ((total > pt)); then
+        pct=$((100 * ((total - pt) - (idle - pi)) / (total - pt)))
+    fi
+    echo "$total $idle" > "$f"
+    rowm load "$(bar "$pct") $(val "$(printf '%3d%%' "$pct")")"
+
+    # memory
+    local mt ma mp
+    read -r mt ma < <(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print t, a}' /proc/meminfo)
+    mp=$((100 * (mt - ma) / mt))
+    rowm mem "$(bar "$mp") $(val "$(awk -v u=$((mt - ma)) -v t="$mt" 'BEGIN{printf "%.1f/%.1fG", u/1048576, t/1048576}')")"
+
+    # temperature
+    local t; t=$(cpu_temp)
+    if [[ -n $t ]]; then rowm temp "$(val "$((t / 1000))°C")"; else row temp "n/a"; fi
+
+    # power
+    local pw="AC" b
+    for b in /sys/class/power_supply/BAT*; do
+        [[ -r $b/capacity ]] && pw="$(<"$b/capacity")% · $(<"$b/status")"
+    done
+    row power "$pw"
+
+    # network
+    if [[ $HIDE_NETWORK == 1 ]]; then
+        row net "hidden"; rowm down "$(val '—')"; rowm up "$(val '—')"
+        return
+    fi
+    local ifc rx tx now pt2 prx ptx pif dt drx=0 dtx=0 ipa
+    ifc=${NET_IFACE:-$(ip route show default 2>/dev/null | awk '{print $5; exit}')}
+    if [[ -z $ifc || ! -r /sys/class/net/$ifc/statistics/rx_bytes ]]; then
+        row net "offline"; rowm down "$(val '—')"; rowm up "$(val '—')"
+        return
+    fi
+    rx=$(<"/sys/class/net/$ifc/statistics/rx_bytes")
+    tx=$(<"/sys/class/net/$ifc/statistics/tx_bytes")
+    now=${EPOCHREALTIME/[.,]/}   # microseconds
+    f="$STATE/.kyber_net"
+    if [[ -r $f ]] && read -r pt2 prx ptx pif < "$f"; then
+        dt=$((now - pt2))
+        if [[ $pif == "$ifc" ]] && ((dt > 0)); then
+            drx=$(((rx - prx) * 1000000 / dt)); dtx=$(((tx - ptx) * 1000000 / dt))
+            ((drx < 0)) && drx=0; ((dtx < 0)) && dtx=0
+        fi
+    fi
+    echo "$now $rx $tx $ifc" > "$f"
+
+    if [[ $HIDE_IP == 1 ]]; then
+        row net "$ifc"
+    else
+        ipa=$(ip -4 -o addr show dev "$ifc" 2>/dev/null | awk '{print $4; exit}')
+        row net "$ifc ${ipa:-no ip}"
+    fi
+    rowm down "$(span "$C_OK" ▼) $(val "$(hum "$drx" /s)") $(span "$C_DIM" "($(hum "$rx") total)")"
+    rowm up   "$(span "$C_WARN" ▲) $(val "$(hum "$dtx" /s)") $(span "$C_DIM" "($(hum "$tx") total)")"
+}
+
+feed_uptime() {
+    local up pid f start lock="—"
+    read -r up _ < /proc/uptime
+    up=$((10#${up/./}))                       # centiseconds since boot
+    rowm uptime "$(val "$(fmt_cs "$up")")"
+
+    pid=$(pgrep -xn hyprlock 2>/dev/null)
+    if [[ -n $pid ]] && read -r -a f < "/proc/$pid/stat"; then
+        start=$((f[21] * 100 / CLK_TCK))      # hyprlock start time, in centiseconds
+        lock=$(fmt_cs $((up - start)))
+    fi
+    rowm locked "$(val "$lock")"
+}
+
+wallpaper_files() {
+    local dir=${WALLPAPER/#\~/$HOME}
+    [[ -d $dir ]] || return 0
+    find -L "$dir" -maxdepth 2 -type f \
+        \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null | sort
+}
+
+feed_wallpaper() {   # prints a random wallpaper path (never the same twice in a row)
+    local imgs pick last="" f="$STATE/.kyber_wall"
+    mapfile -t imgs < <(wallpaper_files)
+    ((${#imgs[@]})) || return 0
+    [[ -r $f ]] && last=$(<"$f")
+    pick=${imgs[RANDOM % ${#imgs[@]}]}
+    if ((${#imgs[@]} > 1)); then
+        while [[ $pick == "$last" ]]; do pick=${imgs[RANDOM % ${#imgs[@]}]}; done
+    fi
+    echo "$pick" > "$f"
+    echo "$pick"
+}
+
+# ── apply: render the hyprlock config from the template ───────────────────────
+ensure_config() {
+    [[ -f $CONF_FILE ]] && return 0
+    mkdir -p "$CONF_DIR"
+    if [[ -r $SHARE/config.example ]]; then cp "$SHARE/config.example" "$CONF_FILE"
+    else : > "$CONF_FILE"; fi
+}
+
+background_block() {
+    local blur p first
+    [[ $BLUR =~ ^[0-4]$ ]] || { warn "BLUR must be 0-4, using 3"; BLUR=3; }
+    [[ $BRIGHTNESS =~ ^[0-9]*\.?[0-9]+$ ]] || { warn "BRIGHTNESS must be a number, using 0.5"; BRIGHTNESS=0.5; }
+    [[ $SLIDESHOW_INTERVAL =~ ^[1-9][0-9]*$ ]] || { warn "SLIDESHOW_INTERVAL must be a whole number of seconds, using 15"; SLIDESHOW_INTERVAL=15; }
+    blur="    blur_passes = $BLUR
+    blur_size = 6
+    noise = 0.012
+    contrast = 0.95
+    brightness = $BRIGHTNESS
+    vibrancy = 0.15"
+
+    case $BACKGROUND in
+        color)
+            printf '    color = rgba(%s, 1.0)' "$(rgb "$C_BG")" ;;
+        image)
+            p=${WALLPAPER/#\~/$HOME}
+            if [[ ! -f $p ]]; then warn "WALLPAPER '$p' not found, using screenshot"; p=screenshot; fi
+            printf '    path = %s\n%s' "$p" "$blur" ;;
+        slideshow)
+            first=$(wallpaper_files | head -n1)
+            if [[ -z $first ]]; then
+                warn "no images found in WALLPAPER directory, using screenshot"
+                printf '    path = screenshot\n%s' "$blur"
+            else
+                printf '    path = %s\n    reload_time = %s\n    reload_cmd = %s feed wallpaper\n    crossfade_time = 1.5\n%s' \
+                    "$first" "$SLIDESHOW_INTERVAL" "$SELF" "$blur"
+            fi ;;
+        screenshot|*)
+            [[ $BACKGROUND == screenshot ]] || warn "unknown BACKGROUND '$BACKGROUND', using screenshot"
+            printf '    path = screenshot\n%s' "$blur" ;;
+    esac
+}
+
+cmd_apply() {
+    local set_default=0
+    [[ ${1:-} == --default ]] && set_default=1
+    local tpl="$SHARE/hyprlock.conf.in"
+    [[ -r $tpl ]] || die "template not found: $tpl"
+    ensure_config
+    load_config; palette "$PALETTE"
+
+    local host ms_update=1000 dots=""
+    host=$(hostname 2>/dev/null); host=${host:-localhost}
+    [[ $HIDE_HOST == 1 ]] && host="kyber"
+    [[ $MILLISECONDS == 1 ]] && ms_update=100
+    [[ $TEXT_DOTS == 1 ]] && dots="    dots_text_format = *"
+
+    shopt -u patsub_replacement 2>/dev/null
+    local out; out=$(<"$tpl")
+    out=${out//@BACKGROUND@/$(background_block)}
+    out=${out//@DOTS_LINE@/$dots}
+    out=${out//@KYBER@/$SELF}
+    out=${out//@FONT_THIN@/$FONT_THIN}
+    out=${out//@FONT@/$FONT}
+    out=${out//@HOST@/$host}
+    out=${out//@MS_UPDATE@/$ms_update}
+    out=${out//@BG_RGB@/$(rgb "$C_BG")}
+    out=${out//@FG_RGB@/$(rgb "$C_FG")}
+    out=${out//@SUB_RGB@/$(rgb "$C_SUB")}
+    out=${out//@H_KEY@/#$C_KEY}
+    out=${out//@H_FG@/#$C_FG}
+    out=${out//@H_DIM@/#$C_DIM}
+    out=${out//@H_OK@/#$C_OK}
+    out=${out//@H_WARN@/#$C_WARN}
+    out=${out//@H_BAD@/#$C_BAD}
+
+    if grep -q '@[A-Z_][A-Z_]*@' <<< "$out"; then
+        warn "unreplaced template tokens remain (template/version mismatch?)"
+    fi
+
+    mkdir -p "$CONF_DIR"
+    printf '# kyber %s — generated file, do not edit.\n# Change %s and run: kyber apply\n%s\n' \
+        "$KYBER_VERSION" "$CONF_FILE" "$out" > "$OUT_FILE"
+    echo "kyber: wrote $OUT_FILE (palette: $PALETTE, background: $BACKGROUND)"
+
+    if ((set_default)); then
+        local hypr="${XDG_CONFIG_HOME:-$HOME/.config}/hypr" target
+        target="$hypr/hyprlock.conf"
+        mkdir -p "$hypr"
+        if [[ -e $target ]] && ! head -n1 "$target" | grep -q '^# kyber '; then
+            local bak; bak="$target.bak-$(printf '%(%Y%m%d-%H%M%S)T' -1)"
+            cp -L "$target" "$bak"
+            echo "kyber: backed up existing config to $bak"
+        fi
+        cp "$OUT_FILE" "$target"
+        echo "kyber: installed as $target"
+    fi
+}
+
+cmd_lock() {
+    command -v hyprlock >/dev/null 2>&1 || die "hyprlock not found in PATH"
+    cmd_apply >/dev/null
+    exec hyprlock --config "$OUT_FILE" "$@"
+}
+
+cmd_config() {
+    ensure_config
+    echo "$CONF_FILE"
+}
+
+cmd_doctor() {
+    local fails=0
+    ok()   { printf '  \e[32m✓\e[0m %s\n' "$1"; }
+    bad()  { printf '  \e[31m✗\e[0m %s\n' "$1"; fails=$((fails + 1)); }
+    meh()  { printf '  \e[33m!\e[0m %s\n' "$1"; }
+
+    echo "kyber $KYBER_VERSION"
+    ((BASH_VERSINFO[0] >= 5)) && ok "bash ${BASH_VERSION%%(*}" || bad "bash 5+ required"
+    if command -v hyprlock >/dev/null 2>&1; then
+        ok "hyprlock: $(hyprlock --version 2>/dev/null | head -n1)"
+    else bad "hyprlock not found in PATH"; fi
+    local c
+    for c in ip awk sed pgrep df find; do
+        command -v "$c" >/dev/null 2>&1 && ok "$c" || bad "$c missing"
+    done
+    command -v lspci >/dev/null 2>&1 && ok "lspci (GPU row)" || meh "lspci missing: GPU row will show n/a (install pciutils)"
+    if command -v fc-list >/dev/null 2>&1; then
+        fc-list 2>/dev/null | grep -qi "${FONT%% Nerd*}" \
+            && ok "font: $FONT" || meh "font '$FONT' not found (install ttf-jetbrains-mono-nerd or set FONT)"
+    fi
+    [[ -r $SHARE/hyprlock.conf.in ]] && ok "template: $SHARE/hyprlock.conf.in" || bad "template missing ($SHARE)"
+    [[ -f $CONF_FILE ]] && ok "config: $CONF_FILE" || meh "no config yet (run: kyber config)"
+    [[ -f $OUT_FILE ]] && ok "theme: $OUT_FILE" || meh "theme not generated yet (run: kyber apply)"
+    ((fails == 0)) && echo "all good." || { echo "$fails problem(s) found."; return 1; }
+}
+
+usage() {
+    cat << USAGE
+kyber $KYBER_VERSION — terminal-style lock screen theme for hyprlock
+
+usage: kyber <command>
+
+  lock              regenerate the theme and run hyprlock with it
+  apply             generate $OUT_FILE
+  apply --default   ...and install it as ~/.config/hypr/hyprlock.conf
+                    (an existing config is backed up first)
+  config            create (if missing) and print the settings file path
+  doctor            check dependencies, fonts and files
+  version           print the version
+
+settings live in: $CONF_FILE
+USAGE
+}
+
+# ── main ──────────────────────────────────────────────────────────────────────
+load_config
+palette "$PALETTE"
+
+case "${1:-help}" in
+    feed)
+        case "${2:-}" in
+            clock)     feed_clock ;;
+            sys)       feed_sys ;;
+            live)      feed_live ;;
+            uptime)    feed_uptime ;;
+            wallpaper) feed_wallpaper ;;
+            *) die "unknown feed '${2:-}'" ;;
+        esac ;;
+    lock)           shift; cmd_lock "$@" ;;
+    apply)          shift; cmd_apply "$@" ;;
+    config)         cmd_config ;;
+    doctor)         cmd_doctor ;;
+    version|-v|--version) echo "kyber $KYBER_VERSION" ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 1 ;;
+esac

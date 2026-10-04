@@ -1,0 +1,9 @@
+# build / packaging artifacts
+pkg/
+src/
+*.pkg.tar.*
+*.tar.gz
+*.zip
+# local files
+*.bak-*
+.DS_Store

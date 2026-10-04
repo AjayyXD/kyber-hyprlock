@@ -1,0 +1,263 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  kyber · terminal-style hyprlock theme   (template — rendered by `kyber apply`)
+#
+#  Tokens written between two @ signs are replaced with your settings from
+#  ~/.config/kyber/config. Edit that file, not the generated hyprlock.conf.
+#
+#  Layout: the terminal window is anchored to the LEFT of the screen (x = 100).
+#  Everything inside shares that origin: text starts at x = 135, the right
+#  column at x = 575. To move the window, shift every "position = X," by the
+#  same amount.
+# ──────────────────────────────────────────────────────────────────────────────
+
+general {
+    hide_cursor = true
+    grace = 0
+    ignore_empty_input = true
+}
+
+animations {
+    enabled = true
+    bezier = ease, 0.25, 0.1, 0.25, 1
+    animation = fadeIn, 1, 4, ease
+    animation = fadeOut, 1, 4, ease
+    animation = inputFieldDots, 1, 2, ease
+}
+
+# ── Background ────────────────────────────────────────────────────────────────
+background {
+    monitor =
+@BACKGROUND@
+}
+
+# ── Terminal window ───────────────────────────────────────────────────────────
+shape {
+    monitor =
+    size = 900, 640
+    color = rgba(@BG_RGB@, 0.72)
+    rounding = 10
+    border_size = 1
+    border_color = rgba(@FG_RGB@, 0.14)
+    position = 100, 0
+    halign = left
+    valign = center
+}
+
+# title bar: traffic lights
+label {
+    monitor =
+    text = <span foreground="##ff5f56">●</span> <span foreground="##ffbd2e">●</span> <span foreground="##27c93f">●</span>
+    font_size = 12
+    font_family = @FONT@
+    position = 130, 295
+    halign = left
+    valign = center
+}
+
+# title bar: title
+label {
+    monitor =
+    text = <span foreground="@H_DIM@">$USER@@HOST@: ~ — kyber</span>
+    font_size = 12
+    font_family = @FONT@
+    position = 235, 295
+    halign = left
+    valign = center
+}
+
+# title bar: divider
+shape {
+    monitor =
+    size = 900, 1
+    color = rgba(@FG_RGB@, 0.10)
+    border_size = 0
+    rounding = 0
+    position = 100, 272
+    halign = left
+    valign = center
+}
+
+# ── prompt: date ──────────────────────────────────────────────────────────────
+label {
+    monitor =
+    text = <span foreground="@H_KEY@">$USER</span><span foreground="@H_DIM@">@@HOST@</span> <span foreground="@H_WARN@">~</span> <span foreground="@H_OK@">❯</span> <span foreground="@H_FG@">date</span>
+    font_size = 13
+    font_family = @FONT@
+    position = 135, 245
+    halign = left
+    valign = center
+}
+
+# clock  HH:MM:SS
+label {
+    monitor =
+    text = cmd[update:1000] @KYBER@ feed clock
+    color = rgba(@FG_RGB@, 0.95)
+    font_size = 64
+    font_family = @FONT_THIN@
+    text_align = left
+    position = 133, 185
+    halign = left
+    valign = center
+}
+
+# full date
+label {
+    monitor =
+    text = cmd[update:30000] date +'%A, %d %B %Y'
+    color = rgba(@SUB_RGB@, 0.75)
+    font_size = 15
+    font_family = @FONT@
+    position = 135, 130
+    halign = left
+    valign = center
+}
+
+# ── prompt: fastfetch (left column) ───────────────────────────────────────────
+label {
+    monitor =
+    text = <span foreground="@H_KEY@">$USER</span><span foreground="@H_DIM@">@@HOST@</span> <span foreground="@H_WARN@">~</span> <span foreground="@H_OK@">❯</span> <span foreground="@H_FG@">fastfetch</span>
+    font_size = 13
+    font_family = @FONT@
+    position = 135, 85
+    halign = left
+    valign = center
+}
+
+# static specs
+label {
+    monitor =
+    text = cmd[update:10000] @KYBER@ feed sys
+    color = rgba(@FG_RGB@, 1)
+    font_size = 13
+    font_family = @FONT@
+    text_align = left
+    position = 135, -15
+    halign = left
+    valign = center
+}
+
+# ── prompt: live stats (right column) ─────────────────────────────────────────
+label {
+    monitor =
+    text = <span foreground="@H_KEY@">$USER</span><span foreground="@H_DIM@">@@HOST@</span> <span foreground="@H_WARN@">~</span> <span foreground="@H_OK@">❯</span> <span foreground="@H_FG@">top -bn1</span>
+    font_size = 13
+    font_family = @FONT@
+    position = 575, 85
+    halign = left
+    valign = center
+}
+
+# live stats: cpu / mem / temp / power / network
+label {
+    monitor =
+    text = cmd[update:1000] @KYBER@ feed live
+    color = rgba(@FG_RGB@, 1)
+    font_size = 13
+    font_family = @FONT@
+    text_align = left
+    position = 575, -15
+    halign = left
+    valign = center
+}
+
+# ── prompt: precise uptime ────────────────────────────────────────────────────
+label {
+    monitor =
+    text = <span foreground="@H_KEY@">$USER</span><span foreground="@H_DIM@">@@HOST@</span> <span foreground="@H_WARN@">~</span> <span foreground="@H_OK@">❯</span> <span foreground="@H_FG@">uptime --precise</span>
+    font_size = 13
+    font_family = @FONT@
+    position = 135, -120
+    halign = left
+    valign = center
+}
+
+# uptime + time spent locked
+label {
+    monitor =
+    text = cmd[update:@MS_UPDATE@] @KYBER@ feed uptime
+    color = rgba(@FG_RGB@, 1)
+    font_size = 14
+    font_family = @FONT@
+    text_align = left
+    position = 135, -168
+    halign = left
+    valign = center
+}
+
+# ── prompt: sudo ──────────────────────────────────────────────────────────────
+label {
+    monitor =
+    text = <span foreground="@H_FG@">[sudo] password for </span><span foreground="@H_KEY@">$USER</span><span foreground="@H_FG@">:</span>
+    font_size = 13
+    font_family = @FONT@
+    position = 135, -225
+    halign = left
+    valign = center
+}
+
+input-field {
+    monitor =
+    size = 420, 34
+    outline_thickness = 0
+    rounding = 0
+    inner_color = rgba(0, 0, 0, 0)
+    outer_color = rgba(0, 0, 0, 0)
+    font_color = rgba(@FG_RGB@, 1)
+    font_family = @FONT@
+@DOTS_LINE@
+    dots_size = 0.35
+    dots_spacing = 0.15
+    dots_center = false
+    fade_on_empty = false
+    hide_input = false
+    placeholder_text =
+    fail_text = <span foreground="@H_BAD@">sudo: $ATTEMPTS incorrect password attempt(s)</span>
+    position = 135, -262
+    halign = left
+    valign = center
+}
+
+# ── status bar (vim-style) ────────────────────────────────────────────────────
+shape {
+    monitor =
+    size = 900, 1
+    color = rgba(@FG_RGB@, 0.10)
+    border_size = 0
+    rounding = 0
+    position = 100, -292
+    halign = left
+    valign = center
+}
+
+label {
+    monitor =
+    text = <span foreground="@H_OK@"><b>-- LOCKED --</b></span>
+    font_size = 12
+    font_family = @FONT@
+    position = 135, -308
+    halign = left
+    valign = center
+}
+
+# keyboard layout
+label {
+    monitor =
+    text = <span foreground="@H_DIM@">layout:</span> <span foreground="@H_FG@">$LAYOUT</span>
+    font_size = 12
+    font_family = @FONT@
+    position = 320, -308
+    halign = left
+    valign = center
+}
+
+# failed attempts
+label {
+    monitor =
+    text = <span foreground="@H_DIM@">tries:</span> <span foreground="@H_FG@">$ATTEMPTS</span>
+    font_size = 12
+    font_family = @FONT@
+    position = 860, -308
+    halign = left
+    valign = center
+}

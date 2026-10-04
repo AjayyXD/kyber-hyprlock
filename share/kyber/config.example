@@ -1,0 +1,46 @@
+# kyber settings — edit, then run `kyber apply` (or just lock: `kyber lock`
+# regenerates the theme every time). One KEY=value per line.
+# Don't use '#' inside values; it starts a comment.
+
+# ── look ──────────────────────────────────────────────────────────────────────
+# catppuccin | gruvbox | nord | tokyo-night | dracula
+PALETTE=catppuccin
+
+# Fonts must be installed. JetBrains Mono Nerd Font is recommended
+# (Arch: ttf-jetbrains-mono-nerd).
+FONT=JetBrainsMono Nerd Font
+FONT_THIN=JetBrainsMono Nerd Font Light
+
+# 24-hour clock (1) or 12-hour with AM/PM (0)
+CLOCK_24H=1
+
+# Show a '*' for each typed character (1) or hyprlock's default dots (0).
+# Needs a recent hyprlock; set to 0 if the config reports an unknown key.
+TEXT_DOTS=1
+
+# ── background ────────────────────────────────────────────────────────────────
+# screenshot : blurred snapshot of your desktop (default, needs no files)
+# image      : a single image, set WALLPAPER=/path/to/image.png
+# slideshow  : random image from a folder every SLIDESHOW_INTERVAL seconds,
+#              crossfaded. Set WALLPAPER=/path/to/folder
+# color      : plain palette color
+BACKGROUND=screenshot
+WALLPAPER=
+SLIDESHOW_INTERVAL=15
+
+# 0-4 blur passes, brightness 0.0-1.0 (lower = darker)
+BLUR=3
+BRIGHTNESS=0.5
+
+# ── data ──────────────────────────────────────────────────────────────────────
+# Show uptime/locked time with milliseconds (refreshes 10x per second).
+# Set to 0 to show whole seconds and refresh once per second (lighter).
+MILLISECONDS=1
+
+# Network interface to monitor; empty = auto-detect from the default route.
+NET_IFACE=
+
+# ── privacy (a lock screen is visible to anyone walking past) ─────────────────
+HIDE_HOST=0       # hide hostname and machine model
+HIDE_IP=0         # hide your IP address
+HIDE_NETWORK=0    # hide network rows entirely

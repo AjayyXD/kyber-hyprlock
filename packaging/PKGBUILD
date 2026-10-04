@@ -1,0 +1,21 @@
+# Maintainer: AjayXD <your-email@example.com>
+pkgname=kyber-hyprlock
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Terminal-style lock screen theme for hyprlock with live system stats"
+arch=('any')
+url="https://github.com/AjayXD/kyber"
+license=('MIT')
+depends=('hyprlock' 'bash' 'iproute2' 'gawk' 'sed' 'procps-ng' 'findutils' 'coreutils')
+optdepends=('ttf-jetbrains-mono-nerd: recommended font'
+            'pciutils: GPU name in the specs panel'
+            'fontconfig: font check in kyber doctor')
+source=("kyber-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')   # run `updpkgsums` after tagging v$pkgver
+
+package() {
+  cd "kyber-$pkgver"
+  make DESTDIR="$pkgdir" PREFIX=/usr install
+  # license directory must match the package name
+  mv "$pkgdir/usr/share/licenses/kyber" "$pkgdir/usr/share/licenses/$pkgname"
+}
